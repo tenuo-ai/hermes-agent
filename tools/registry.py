@@ -165,6 +165,24 @@ class ToolRegistry:
         # against it: a cache entry keyed on the generation is valid for as
         # long as the generation hasn't changed.
         self._generation: int = 0
+        # Optional enforcement hook — called before every dispatch.
+        # Raise any exception to deny the call; the error string becomes the tool result.
+        # Set via set_enforcement_fn(). Designed for authorization layers (e.g. Tenuo)
+        # that need universal coverage including the execute_code sandbox.
+        self._enforcement_fn: Optional[Callable] = None
+
+    def set_enforcement_fn(self, fn: Optional[Callable]) -> None:
+        """Register a function to be called before every tool dispatch.
+
+        The function receives ``(tool_name: str, args: dict, **kwargs)`` and
+        should raise to deny the call — the exception message is returned as
+        the tool error.  Pass ``None`` to remove a previously registered fn.
+
+        Because ``dispatch`` is the single call site for every tool execution
+        path (main agent loop, execute_code sandbox, MCP, background tasks),
+        this hook provides universal enforcement coverage.
+        """
+        self._enforcement_fn = fn
 
     def _snapshot_state(self) -> tuple[List[ToolEntry], Dict[str, Callable]]:
         """Return a coherent snapshot of registry entries and toolset checks."""
@@ -393,7 +411,17 @@ class ToolRegistry:
         * Async handlers are bridged automatically via ``_run_async()``.
         * All exceptions are caught and returned as ``{"error": "..."}``
           for consistent error format.
+        * If ``set_enforcement_fn`` was called, the enforcement function is
+          invoked first and may raise to deny the call.
         """
+        # Enforcement hook — universal coverage including execute_code sandbox.
+        # Raising denies the call; the exception message becomes the tool result.
+        if self._enforcement_fn is not None:
+            try:
+                self._enforcement_fn(name, args, **kwargs)
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
         entry = self.get_entry(name)
         if not entry:
             return json.dumps({"error": f"Unknown tool: {name}"})
