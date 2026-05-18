@@ -193,7 +193,14 @@ class ToolRegistry:
         - The fn runs **synchronously on the dispatch thread** — keep it fast
           or dispatch will block.
         - Register before the agent loop starts; concurrent re-registration
-          during dispatch is not coordinated.
+          during dispatch is not coordinated (not enforced; a late registration
+          during dispatch is a silent race, not a RuntimeError).
+        - **Re-entrant infinite recursion**: if the enforcement fn calls
+          ``dispatch`` for the *same* tool it is protecting, the enforcement fn
+          fires again, which calls dispatch again — unbounded recursion.
+          Dispatching a *different* tool (e.g. a probe) is safe and tested.
+          A depth counter would protect against this, but the scenario is
+          self-inflicted; a docstring warning is the chosen trade-off.
 
         Because ``dispatch`` is the single call site for every tool execution
         path (main agent loop, execute_code sandbox, MCP, background tasks),
@@ -205,6 +212,10 @@ class ToolRegistry:
                 enforcement because the returned coroutine is never awaited.
         """
         import inspect
+        # Note: inspect.iscoroutinefunction has known gaps — it returns False for
+        # functools.partial wrapping an async fn, Callable classes whose __call__
+        # is async, and sync functions that happen to return a coroutine.  These
+        # are uncommon footguns; the guard catches the obvious async def case only.
         if fn is not None and inspect.iscoroutinefunction(fn):
             raise TypeError(
                 "enforcement fn must be synchronous — dispatch is synchronous "
@@ -465,7 +476,7 @@ class ToolRegistry:
                     "(bug in enforcement fn — failing closed)",
                     name,
                 )
-                return json.dumps({"error": "Tool authorisation unavailable (see logs)"})
+                return json.dumps({"error": f"Tool '{name}' authorisation unavailable (see logs)"})
 
         entry = self.get_entry(name)
         if not entry:

@@ -52,7 +52,8 @@ class TestEnforcementFn:
         assert "error" in result
         # Must NOT expose the raw TypeError message to the model
         assert "positional argument" not in result["error"]
-        # Must surface as an operator-visible internal error
+        # Must surface as an operator-visible internal error including the tool name
+        assert "test_tool" in result["error"]
         assert "unavailable" in result["error"].lower() or "authoris" in result["error"].lower()
 
     def test_enforcement_fn_allow_passes_through(self):
@@ -213,4 +214,3 @@ def _make_registry_with_tool(name: str = "test_tool") -> ToolRegistry:
         handler=lambda args, **kw: json.dumps({"result": "ok"}),
     )
     return r
-
