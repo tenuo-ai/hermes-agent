@@ -203,14 +203,3 @@ class TestEnforcementFn:
         # Bug message is hidden; agent sees generic operator error
         assert "unexpected None" not in bug["error"]
         assert denial["error"] != bug["error"]
-
-
-def _make_registry_with_tool(name: str = "test_tool") -> ToolRegistry:
-    r = ToolRegistry()
-    r.register(
-        name=name,
-        toolset="test",
-        schema={"name": name, "description": "test"},
-        handler=lambda args, **kw: json.dumps({"result": "ok"}),
-    )
-    return r
