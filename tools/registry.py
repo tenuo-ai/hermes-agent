@@ -21,7 +21,7 @@ import logging
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Protocol, Set
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +157,16 @@ class EnforcementDenied(Exception):
     """
 
 
+class EnforcementFn(Protocol):
+    """Callback signature for ToolRegistry.set_enforcement_fn.
+
+    Called synchronously inside ``dispatch()`` before any handler runs.
+    Raise :exc:`EnforcementDenied` to block the call; return value is ignored.
+    """
+
+    def __call__(self, tool_name: str, args: dict, **kwargs: Any) -> None: ...
+
+
 class ToolRegistry:
     """Singleton registry that collects tool schemas + handlers from tool files."""
 
@@ -179,15 +189,23 @@ class ToolRegistry:
         # as bugs in the enforcement fn (fail-closed with an operator log).
         # Set via set_enforcement_fn(). Designed for authorization layers
         # that need universal coverage including the execute_code sandbox.
-        self._enforcement_fn: Optional[Callable] = None
+        self._enforcement_fn: Optional[EnforcementFn] = None
 
-    def set_enforcement_fn(self, fn: Optional[Callable]) -> None:
+    def set_enforcement_fn(self, fn: Optional[EnforcementFn]) -> None:
         """Register a synchronous function called before every tool dispatch.
 
         ``fn(tool_name, args, **kwargs)`` — raise :exc:`EnforcementDenied` to
         deny the call; the exception message becomes the tool error result.
         Any other exception is treated as a bug (logged, fail-closed).
         Pass ``None`` to remove a previously registered fn.
+
+        Forwarded kwargs:
+            The fn receives every keyword argument that ``dispatch()`` is
+            invoked with.  Today that includes ``task_id``, ``session_id``,
+            ``tool_call_id``, and (for ``execute_code``) ``enabled_tools``.
+            Additional kwargs may be added by future dispatch sites — write
+            the fn defensively (``def fn(name, args, **kwargs): ...``) so
+            new fields don't break it.
 
         Caveats:
         - The fn runs **synchronously on the dispatch thread** — keep it fast
@@ -201,10 +219,16 @@ class ToolRegistry:
           Dispatching a *different* tool (e.g. a probe) is safe and tested.
           A depth counter would protect against this, but the scenario is
           self-inflicted; a docstring warning is the chosen trade-off.
+        - Tools intercepted by ``run_agent.py`` before reaching the registry
+          (``todo``, ``memory``, ``session_search``, ``delegate_task``) are
+          not gated by this hook.
 
         Because ``dispatch`` is the single call site for every tool execution
         path (main agent loop, execute_code sandbox, MCP, background tasks),
-        this hook provides universal enforcement coverage.
+        this hook provides universal enforcement coverage across the
+        dispatch surface — unlike ``pre_tool_call``, which can be skipped
+        via ``skip_pre_tool_call_hook=True`` and is bypassed by callers
+        that invoke ``registry.dispatch()`` directly.
 
         Raises:
             TypeError: if ``fn`` is an async (coroutine) function.  Dispatch is
@@ -464,10 +488,15 @@ class ToolRegistry:
                 self._enforcement_fn(name, args, **kwargs)
             except EnforcementDenied as e:
                 logger.debug("registry enforcement denied %s: %s", name, e)
+                # Lazy import: model_tools imports tools.registry at module
+                # level, so importing _sanitize_tool_error here avoids a
+                # circular dependency. Python caches the import after the
+                # first denial, so the lookup is amortised across the
+                # process lifetime.
                 try:
                     from model_tools import _sanitize_tool_error
                     msg = _sanitize_tool_error(str(e))
-                except Exception:
+                except ImportError:
                     msg = str(e)
                 return json.dumps({"error": msg})
             except Exception:
