@@ -17,6 +17,7 @@ Import chain (circular-import safe):
 import ast
 import functools
 import importlib
+import inspect
 import json
 import logging
 import sys
@@ -560,7 +561,6 @@ class ToolRegistry:
                 synchronous; an async enforcement fn would silently bypass
                 enforcement because the returned coroutine is never awaited.
         """
-        import inspect
         # Note: inspect.iscoroutinefunction has known gaps — it returns False for
         # functools.partial wrapping an async fn, Callable classes whose __call__
         # is async, and sync functions that happen to return a coroutine.  These
