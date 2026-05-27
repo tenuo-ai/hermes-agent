@@ -1254,7 +1254,7 @@ class ToolRegistry:
                 try:
                     from model_tools import _sanitize_tool_error
                     msg = _sanitize_tool_error(str(e))
-                except ImportError:
+                except Exception:
                     msg = str(e)
                 return json.dumps({"error": msg})
             except Exception:
@@ -1263,7 +1263,7 @@ class ToolRegistry:
                     "(bug in enforcement fn — failing closed)",
                     name,
                 )
-                return json.dumps({"error": f"Tool '{name}' authorisation unavailable (see logs)"})
+                return json.dumps({"error": f"Tool '{name}' authorization unavailable (see logs)"})
 
         entry = self.get_entry(name, scope=scope)
         if not entry:
